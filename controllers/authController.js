@@ -355,69 +355,76 @@ const authController = {
     }
   },
 
-  forgotPassword: async (req, res) => {
-    try {
-      const { error, value } = forgotPasswordSchema.validate(req.body);
-      if (error) {
-        return validationErrorResponse(res, error);
-      }
-
-      const { email } = value;
-
-      const user = await User.findOne({ where: { email } });
-      if (!user) {
-        // Don't reveal that email doesn't exist
-        // send email 
-          await sendMail(
-            user.email,
-            "Forget Password",
-            `Hello ${user.firstName}, Forget Password link below!`,
-            `<h1>Registered Confirmed</h1><p>Thank you for register our System.</p>`
-          );
-        return successResponse(res, null, 'If the email exists, a reset link has been sent');
-      }
-
-      if (user.status !== 'active') {
-        return errorResponse(res, 'Account is not active', 403);
-      }
-
-      // Generate reset token
-      const resetToken = generateToken();
-      const resetTokenHash = await hashToken(resetToken);
-      const resetTokenExpires = generateExpiryTime(60); // 1 hour
-
-      await user.update({
-        resetPasswordTokenHash: resetTokenHash,
-        resetPasswordExpires: resetTokenExpires
-      });
-
-      // Send reset email
-      // const emailResult = await EmailService.sendPasswordResetEmail(user, resetToken);
-
-      // if (!emailResult.success && !emailResult.developmentFallback) {
-      //   return errorResponse(res, 'Failed to send reset email', 500);
-      // }
-
-
-
-
-
-      // Log audit
-      await AuditLog.create({
-        userId: user.id,
-        action: 'forgot_password',
-        resourceType: 'user',
-        resourceId: user.id,
-        ip: req.ip,
-        userAgent: req.get('User-Agent')
-      });
-
-      return successResponse(res, null, 'If the email exists, a reset link has been sent');
-    } catch (error) {
-      logger.error('Forgot password error:', error);
-      return errorResponse(res, 'Password reset request failed', 500);
+forgotPassword: async (req, res) => {
+  try {
+    // Validate request body
+    const { error, value } = forgotPasswordSchema.validate(req.body);
+    if (error) {
+      return validationErrorResponse(res, error);
     }
-  },
+
+    const { email } = value;
+
+    // Find user by email
+    const user = await User.findOne({ where: { email } });
+
+    // If user doesn't exist, don't reveal it
+    if (!user) {
+      return successResponse(res, null, 'If the email exists, a reset link has been sent');
+    }
+
+    // Check if user is active
+    if (user.status !== 'active') {
+      return errorResponse(res, 'Account is not active', 403);
+    }
+
+    // Generate reset token and hash it
+    const resetToken = generateToken();
+    const resetTokenHash = await hashToken(resetToken);
+
+    // Set token expiry (1 hour from now)
+    const resetTokenExpires = generateExpiryTime(60); // 60 minutes
+
+    // Update user with hashed reset token and expiry
+    await user.update({
+      resetPasswordTokenHash: resetTokenHash,
+      resetPasswordExpires: resetTokenExpires
+    });
+
+    // Build reset password link
+    const link = `${process.env.FRONTEND_URL}/auth/reset-password?token=${resetToken}`;
+
+    // Send reset password email
+    await sendMail(
+      user.email,
+      "Password Reset Request",
+      `Hello ${user.firstName}, please use the link below to reset your password:`,
+      `<h1>Password Reset Request</h1><p>Click the link below to reset your password:</p><a href="${link}">Reset Password</a>`
+    );
+
+    // Log audit event
+    await AuditLog.create({
+      userId: user.id,
+      action: 'forgot_password',
+      resourceType: 'user',
+      resourceId: user.id,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    // Return success response
+    return res.status(200).json({
+      success: true,
+      message: "If the email exists, a reset link has been sent",
+      link // optional: remove in production
+    });
+
+  } catch (error) {
+    logger.error('Forgot password error:', error);
+    return errorResponse(res, 'Password reset request failed', 500);
+  }
+},
+
 
   resetPassword: async (req, res) => {
     try {
@@ -470,7 +477,13 @@ const authController = {
         ip: req.ip,
         userAgent: req.get('User-Agent')
       });
-
+// send email 
+          await sendMail(
+            user.email,
+            "Password reset Successfully",
+            `Hello ${user.firstName}, your password reset is confirmed!`,
+            `<h1>Password Reset</h1><p>Your password reset successfully</p>`
+          );
       return successResponse(res, null, 'Password reset successfully. You can now login with your new password.');
     } catch (error) {
       logger.error('Reset password error:', error);
